@@ -1,0 +1,195 @@
+#!/usr/bin/env python
+#
+# colcolor: Colorize (with shell color codes) columns by value.
+#
+# (c) 2022, Eric A. Borisch
+#
+# BSD 3-Clause License
+#
+
+import sys
+import re
+
+from math import isnan, isinf
+
+# Pattern for detecting floating point / integer values with SI suffixes
+VPAT = re.compile(r'\s*([+-]?[0-9]*\.?[0-9]+(?:E[+-]?[0-9]+)?)([KMGT])?',
+                  re.IGNORECASE)
+
+
+def rgb_to_xterm(rgb, text):
+    "Returns text wrapped with console escapes for the color rgb"
+    if rgb is None:
+        return text
+    if max(rgb) > 1.0 or min(rgb) < 0:
+        raise ValueError("rgb must be a tuple of [0..1] values.")
+
+    # Quantize channels in 0..5
+    quant_0_5 = [int(x*6) if x < 1 else 5 for x in rgb]
+
+    if quant_0_5[0] == quant_0_5[1] and quant_0_5[1] == quant_0_5[2]:
+        # Shades of gray
+        val = int(round(rgb[0]*23)) + 232
+    else:
+        val = quant_0_5[0]*36 + quant_0_5[1]*6 + quant_0_5[2] + 16
+    return "\033[38;5;{:d}m{}\033[0m".format(val, text)
+
+
+def color_column(values):
+    "Provided a list of values that form a column, color code them by value."
+    powers = {'T': 1E12, 'G': 1E9, 'M': 1E6, 'K': 1E3}
+
+    # Build up color scale values in c_scale
+    c_scale = []
+    for val in values:
+        # Don't process times
+        if ':' in val:
+            c_scale.append(None)
+            continue
+
+        match = VPAT.match(val)
+        if match:
+            ext = match.groups()
+            val = float(ext[0])
+            if ext[1]:
+                # Handle TGMK suffixes
+                val = val * powers[ext[1].upper()]
+            if isnan(val) or isinf(val):
+                val = None
+        else:
+            val = None
+        c_scale.append(val)
+
+    # Extract only values that we can scale.
+    found_values = [v for v in c_scale if v is not None]
+
+    if not found_values:
+        # No integer/float values detected on this line.
+        return values
+
+    max_v = max(found_values)
+    min_v = min(found_values)
+    range_v = max_v - min_v
+    if max_v == min_v:
+        # All of the values are the same; don't color.
+        return values
+
+    # Convert scale values into RGB
+    for idx, val in enumerate(c_scale):
+        if val is None:
+            continue
+        # Scale in 0..1
+        scl = (val - min_v) / (range_v)
+        # Can be adjusted; this makes a nice blue->red scale
+        c_scale[idx] = (scl ** 0.2, 0, 1 - scl ** 2)
+
+    # Use RGB values in c_scale to color (terminal escapes) strings in values
+    return map(rgb_to_xterm, c_scale, values)
+
+
+def lines_to_grid(lines):
+    """
+    Separate lines into a grid (2D array), return the grid and the separator to
+    be use (either a tab or space.)
+    """
+    # If we have tabs, this is trivial.
+    if '\t' in lines[0]:
+        grid = [x.split() for x in lines]
+        cols = max(map(len, grid))
+        for row in grid:
+            if len(row) < cols:
+                row.extend([''] * (cols - len(row)))
+        return (grid, '\t')
+
+    # Detect blank columns for separators
+    lens = tuple(map(len, lines))
+    llim = max(lens)
+    spaces = [True] * (llim + 1)
+    # Project through lines to find consistent space columns
+    for line in lines:
+        for idx, char in enumerate(line):
+            if char not in (' ', '\t'):
+                spaces[idx] = False
+
+    # Collapse multple contiguous spaces to leftmost space
+    cols = []
+    for idx in range(1, llim - 1):
+        if spaces[idx] and not spaces[idx-1]:
+            cols.append(idx)
+
+    if not cols or cols[-1] != llim:
+        cols.append(llim)
+
+    # Collapse these into field widths
+    for idx in range(len(cols)-1, 0, -1):
+        cols[idx] = cols[idx] - cols[idx-1]
+
+    if len(cols) == 1:
+        # Logic below fails for single column
+        return ([(entry,) for entry in lines], '')
+
+    # Make regex to split found columns
+    pats = ['(.{{{}}})'.format(cols[0])]
+    for col_width in cols[1:]:
+        # Each column starts with a space; we need the range as any column
+        # might be the last column for that line
+        pats.append('( .{{1,{}}})?'.format(col_width - 1))
+    pat = re.compile(''.join(pats))
+    grid = []
+    for row in lines:
+        found = pat.match(row)
+        if not found:
+            # Likely a strange header / status row. Just include in the output
+            entries = [row] + [''] * (len(cols) - 1)
+        else:
+            entries = list(found.groups())
+            for idx, ent in enumerate(entries):
+                if not ent:
+                    entries[idx] = ' '*cols[idx]
+        grid.append(entries)
+    return (grid, '')
+
+
+def main():
+    """
+    usage: colcolor [-h] [-H] <filenames>
+
+      -h: First line is header. (Tries to autodetect even when not set.)
+      -H: Print this help message.
+
+    Reads from files (or stdin if missing or '-') and colorcodes each column
+    by value.
+    """
+    header = False
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '-H':
+            help(main)
+            sys.exit(0)
+        if sys.argv[1] == '-h':
+            header = True
+            sys.argv.pop(1)
+
+    import fileinput
+    lines = [l_in.rstrip() for l_in in fileinput.input()]
+
+    # Automatic header detection; if there are no numbers, a header line.
+    while header or not VPAT.search(lines[0]):
+        print(lines.pop(0))
+        header = False
+
+    grid, sep = lines_to_grid(lines)
+
+    num_col = max([len(line) for line in grid])
+    columns = [[] for idx in range(num_col)]
+    for row in grid:
+        for col_num, val in enumerate(row):
+            columns[col_num].append(val)
+        for col_num in range(len(row), num_col):
+            columns[col_num].append(None)
+
+    for fancy_line in zip(*map(color_column, columns)):
+        print(sep.join(fancy_line))
+
+
+if __name__ == '__main__':
+    main()
