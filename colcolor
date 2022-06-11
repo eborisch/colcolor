@@ -173,22 +173,23 @@ def main():
     lines = [l_in.rstrip() for l_in in fileinput.input()]
 
     # Automatic header detection; if there are no numbers, a header line.
-    while header or not VPAT.search(lines[0]):
+    while lines and (header or not VPAT.search(lines[0])):
         print(lines.pop(0))
         header = False
 
-    grid, sep = lines_to_grid(lines)
+    if lines:
+        grid, sep = lines_to_grid(lines)
 
-    num_col = max([len(line) for line in grid])
-    columns = [[] for idx in range(num_col)]
-    for row in grid:
-        for col_num, val in enumerate(row):
-            columns[col_num].append(val)
-        for col_num in range(len(row), num_col):
-            columns[col_num].append(None)
+        num_col = max([len(line) for line in grid])
+        columns = [[] for idx in range(num_col)]
+        for row in grid:
+            for col_num, val in enumerate(row):
+                columns[col_num].append(val)
+            for col_num in range(len(row), num_col):
+                columns[col_num].append(None)
 
-    for fancy_line in zip(*map(color_column, columns)):
-        print(sep.join(fancy_line))
+        for fancy_line in zip(*map(color_column, columns)):
+            print(sep.join(fancy_line))
 
 
 if __name__ == '__main__':
