@@ -177,19 +177,21 @@ def main():
         print(lines.pop(0))
         header = False
 
-    if lines:
-        grid, sep = lines_to_grid(lines)
+    if not lines:
+        return
 
-        num_col = max([len(line) for line in grid])
-        columns = [[] for idx in range(num_col)]
-        for row in grid:
-            for col_num, val in enumerate(row):
-                columns[col_num].append(val)
-            for col_num in range(len(row), num_col):
-                columns[col_num].append(None)
+    grid, sep = lines_to_grid(lines)
 
-        for fancy_line in zip(*map(color_column, columns)):
-            print(sep.join(fancy_line))
+    num_col = max([len(line) for line in grid])
+    columns = [[] for idx in range(num_col)]
+    for row in grid:
+        for col_num, val in enumerate(row):
+            columns[col_num].append(val)
+        for col_num in range(len(row), num_col):
+            columns[col_num].append(None)
+
+    for fancy_line in zip(*map(color_column, columns)):
+        print(sep.join(fancy_line))
 
 
 if __name__ == '__main__':
