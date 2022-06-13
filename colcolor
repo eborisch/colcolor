@@ -173,9 +173,12 @@ def main():
     lines = [l_in.rstrip() for l_in in fileinput.input()]
 
     # Automatic header detection; if there are no numbers, a header line.
-    while header or not VPAT.search(lines[0]):
+    while lines and (header or not VPAT.search(lines[0])):
         print(lines.pop(0))
         header = False
+
+    if not lines:
+        return
 
     grid, sep = lines_to_grid(lines)
 
